@@ -1,0 +1,1027 @@
+---
+title: "STA 141A Final Project"
+author: "Daniel Wallace"
+date: "3/14/2022"
+output: html_document
+---
+
+
+***
+
+
+### A. Abstract
+
+
+The United States and several other countries worldwide implemented national stay-at-home policies a.k.a "lockdowns" soon after COVID-19 was declared a pandemic by the World Health Organization on March 11, 2020. To test whether these lockdowns had a significant impact in reducing the number of COVID-19 cases and deaths, I conducted an interrupted time series analysis with ordinary least squares regression. Data from the World Health Organization was used to examine COVID-19 data from Spain, Belgium, the United States, and Mexico to answer this question. It was discovered that in each case, there was a positive trend of cases and deaths prior to lockdowns. For Spain and Brazil, a statistically significant decrease in new cases and deaths was determined, but only a statistically significant decrease in new cases was found for the United States and Mexico. In addition, residuals vs. fitted values plots indicated it was likely the model I used was insufficient and needed to take into account possible non-linear terms to be a better fit for the data. 
+
+
+***
+
+
+### B. Introduction
+
+
+In the first few months of the coronavirus disease 2019 (COVID-19) pandemic, many countries around the world implemented "lockdowns" in which individuals were asked not to leave their homes to help "flatten the curve". In other words, the goal was to spread out the rate of infection by the severe acute respiratory syndrome coronavirus 2 (SARS-CoV-2) virus so that the health care systems of respective areas were not overwhelmed with too many people needing critical care in short spans of time. As a result, health care workers could save as many people as possible from dying. If successful, the lockdowns should have resulted in less infections and deaths in the period during and for a short time after the lockdowns than there would have been otherwise. In this report, I analyze country-level data on virus incidence, virus fatality, and policy response to determine whether country-wide lockdown policies first implemented in March 2020 that lasted continuously for a long period (more than two months) and generally required people to not leave their homes with minor exceptions were significantly associated with helping prevent people from catching and dying from COVID-19. If the association is strong, then governments can be more confident that despite the possible risks of imposing a lockdown on a population, the risks may be worthwhile for the sake of saving lives.
+
+
+The country-level virus incidence and virus fatality data were acquired from the World Health Organization (WHO) [1] while the country-level policy response data was acquired from the Oxford Coronavirus Government Response Tracker (OCGRT) through the Our World in Data project of the Global Change Data Lab organization [2]. For the WHO dataset, a subset of the WHO's publically available data was used that included data on the daily number of new virus infections, cumulative virus infections, new virus-related deaths, and cumulative virus-related deaths on a per-country basis from January 2020 through October 2020 that were reported to the WHO by each country. The OCGRT data included the level of stay-at-home restrictions a country had from a level of "0" (no stay-at-home policy)  to "3" (required to not leave the house with minimal exceptions e.g. allowed to leave only once every few days, or only one person can leave at a time, etc.). A level of "2" (required to not leave the house with exceptions for daily exercise, grocery shopping, and ‘essential’ trips) was chosen for this analysis because that was the level of policy response chosen by the government of the United States in the beginnings of the pandemic. I am most interested in analyzing the United States above all other countries since it is where I was born and raised and have lived throughout the pandemic, and this fact has shaped the nature of the investigation and the countries chosen. As such, data from Belgium, Mexico, Spain, and the United States are used as case studies due to my personal interest in using countries with a policy response similar to the United States, including the length of their lockdowns (greater than two months), when their lockdowns began (March), and the level of stay at home restrictions (level "2").
+
+
+***
+
+
+### C. Background
+
+
+The WHO declared a global pandemic of COVID-19 on March 11, 2020. As of March 13, 2022, the pandemic is said to have caused more than six million deaths worldwide and over 993,000 deaths in the United States. In response, several measures have been proposed to reduce the number of infections. Since the virus is predominantly transmitted via small liquid particles emitted from an infected person's mouth and nose, the most widely implemented measures have people keep their distance from each other and cover their mouths and noses with some sort of barrier. These measures include wearing masks, "social distancing" by staying more than six-feet away from others, and stay-at-home requirements, also known as "lockdowns".
+
+
+Although there was and continues to be debate as to whether the benefits of lockdowns outweigh the economic and psychological costs, especially for lockdowns that last for several months, many national governments decided the pandemic was serious enough to merit country-wide lockdowns early in the pandemic. According to the OCGRT data, Spain, Belgium, the United States, and Mexico first implemented lockdowns March 14, March 18, March 15, and March 30, respectively, and lasted 74 days, 82 days, 127 days, and 165 days, respectively. Assessing the impact of these and other lockdowns is complicated by the fact that the frequency of virus testing and the criteria for reporting whether a person has the virus or a death was caused by the virus varies widely between countries and may change over time. For instance, in Belgium, it is possible that the country over-reported the number of cases of the virus, with suspected cases being reported along with confirmed cases.
+
+
+***
+
+
+### D. Descriptive Analysis
+
+
+```{r include=FALSE}
+### D. Descriptive Statistics
+
+## Load libraries
+
+library(formatR)
+library(knitr)
+library(tidyverse)
+library(gridExtra)
+library(scales)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(sf)
+library(jtools)
+library(ggpubr)
+library(dplyr)
+library(dotwhisker)
+library(openxlsx)
+library(huxtable)
+library(officer)
+library(flextable)
+library(ggfortify)
+library(nlme)
+library(car)
+library(ggplot2)
+library(tidyquant)
+library(purrr)
+```
+
+
+```{r include=FALSE}
+
+
+## Code output formatting
+
+knitr::opts_chunk$set(
+    #error = FALSE,
+    #message = FALSE,
+    #warning = FALSE,
+    echo = FALSE,
+    fig.width=4, fig.height=3, #set figure size
+    fig.align='center' #center plot
+    #options(knitr.kable.NA = ''), #do not print NA in knitr table
+    #tidy = FALSE #add line breaks in R codes
+)
+```
+
+
+```{r include=FALSE}
+
+
+## Set functions
+
+settingData = function (dataset, lockdown.date){
+  
+  dataset$time<-1:nrow(dataset)
+  
+  dataset$level<-NA
+  dataset$level[dataset$date<lockdown.date]<-0
+  dataset$level[dataset$date>=lockdown.date]<-1
+  
+  dataset$trend<-NA
+  dataset$trend[dataset$date<lockdown.date]<-0
+  dataset$trend[dataset$date>=lockdown.date]<-seq(1:sum(dataset$date>=lockdown.date))
+  
+  return(dataset)
+}
+
+
+
+
+ plotGraphicEpidemicCurves = function(dataset, local, lockdown.beg, lockdown.fin){
+
+  g1<-ggplot(dataset)+
+    #geom_rect(xmin=lockdown.beg, xmax=lockdown.fin, ymin=-Inf, ymax=Inf, fill="lightcyan1", alpha=1, inherit.aes = F)+
+    geom_line(aes(x=date,y=totalCases, colour="Total cases"), size=2)+  
+    geom_line(aes(x=date,y=totalDeaths, colour="Total deaths"), size=2)+  
+    scale_colour_manual(values = c("blue", "red"))+
+    scale_x_date(date_labels = "%b-%d", breaks = c(as.Date("2020-04-01"),as.Date("2020-05-01"),as.Date("2020-06-01")))+
+    scale_y_continuous(labels = function(x) format(x, big.mark="."), limits = c(0,31000))+
+    labs(title="Natural scale",
+         x="", 
+         y = "")+
+    guides(color=guide_legend(title=""))+
+    theme_classic()+
+    theme(plot.title = element_text(face = "italic", size = 18, hjust = 0.5),
+          plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+          plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+          axis.title = element_text(face = "italic", size = 20, hjust = 0.5),
+          axis.text = element_text(size = 18),
+          legend.text=element_text(face = "italic", size = 16, hjust = 0.5),
+          legend.title = element_text(size=14),
+          legend.position = "bottom")
+  g2<-ggplot(dataset)+
+    #geom_rect(xmin=lockdown.beg, xmax=lockdown.fin, ymin=-Inf, ymax=Inf, fill="lightcyan1", alpha=1, inherit.aes = F)+
+    geom_line(aes(x=date,y=log(totalCases), colour="Total cases"), size=2)+  
+    geom_line(aes(x=date,y=log(totalDeaths), colour="Total deaths"), size=2)+  
+    scale_colour_manual(values = c("blue", "red"))+
+    scale_y_continuous(labels = function(x) format(x, big.mark="."), limits = c(0,10))+
+    scale_x_date(date_labels = "%b-%d", breaks = c(as.Date("2020-04-01"),as.Date("2020-05-01"),as.Date("2020-06-01")))+
+    labs(title="Logaritmic scale",
+         x="", 
+         y = "")+
+    guides(color=guide_legend(title=""))+
+    theme_classic()+
+    theme(plot.title = element_text(face = "italic", size = 18, hjust = 0.5),
+          plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+          plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+          axis.title = element_text(face = "italic", size = 20, hjust = 0.5),
+          axis.text = element_text(size = 18),
+          legend.text=element_text(face = "italic", size = 16, hjust = 0.5),
+          legend.title = element_text(size=14),
+          legend.position = "bottom")
+  annotate_figure(ggarrange(g1,g2, common.legend = T, legend = "bottom"),
+                  top = text_grob(local, color = "black", face = "bold", size = 20))
+}
+ 
+
+ 
+ 
+plotGraphicNewCasesITS = function(dataset, local, lockdown.beg, lockdown.fin){
+  
+  m1<-lm(newCasesLog ~ time + level + trend,
+         data=dataset)
+  
+  print(summary(m1))
+  
+  ggplot(dataset)+
+    geom_rect(xmin=lockdown.beg, xmax=lockdown.fin, ymin=-Inf, ymax=Inf, fill="lightcyan1", alpha=1, inherit.aes = F)+
+    geom_point(data = dataset%>%filter(level==0), aes(x=date, newCasesLog), size=2)+
+    geom_point(data = dataset%>%filter(level==1), aes(x=date, newCasesLog), size=2)+
+    scale_y_continuous(labels = function(x) format(x, big.mark="."))+
+    scale_x_date(date_labels = "%b", breaks = c(as.Date("2020-04-01"),as.Date("2020-05-01"),as.Date("2020-06-01")))+
+    geom_smooth(data=dataset%>%filter(level==0), 
+                aes(x=date, y=newCasesLog), 
+                method = "lm", formula = "y ~ x", se = T, colour="red", size=1.5)+
+    geom_segment(data=dataset,
+                 aes(x=date[1], y=m1$coefficients[1] + m1$coefficients[2], 
+                     xend=date[nrow(dataset)], yend=m1$coefficients[1] +  m1$coefficients[2]*nrow(dataset)),
+                 colour="red", linetype="dashed", size=1.5)+
+    geom_smooth(data=dataset%>%filter(level==1), 
+                aes(x=date, y=newCasesLog), 
+                method = "lm", formula = "y ~ x", se = T, colour="red", size=1.5)+
+    labs(title=local,
+         x="", 
+         y ="New daily cases (log)")+
+    guides(color=guide_legend(title=""))+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+          plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+          plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+          axis.title = element_text(size = 12),
+          axis.text = element_text(size = 20),
+          legend.text=element_text(size=14),
+          legend.title = element_text(size=14),
+          legend.position = "none")
+} 
+ 
+
+
+
+modelGeneral = function(dataset, variable){
+  m1<-lm(variable~time + level + trend,
+         data=dataset)
+  
+  return(m1)
+}
+
+
+
+
+modelSummary = function(dataset, variable){
+  m1<-lm(variable~time + level + trend,
+         data=dataset)
+  
+  return(summary(m1))
+}
+
+
+
+
+plotGraphicNewDeathsITS = function(dataset, local, lockdown.beg, lockdown.fin){
+  
+  m1<-lm(newDeathsLog ~ time + level + trend,
+         data=dataset)
+  
+  print(summary(m1))
+  
+  ggplot(dataset)+
+    geom_rect(xmin=lockdown.beg, xmax=lockdown.fin, ymin=-Inf, ymax=Inf, fill="lightcyan1", alpha=1, inherit.aes = F)+
+    geom_point(data = dataset%>%filter(level==0), aes(x=date, newDeathsLog), size=2)+
+    geom_point(data = dataset%>%filter(level==1), aes(x=date, newDeathsLog), size=2)+
+    scale_y_continuous(labels = function(x) format(x, big.mark="."))+
+    scale_x_date(date_labels = "%b", breaks = c(as.Date("2020-04-01"),as.Date("2020-05-01"),as.Date("2020-06-01")))+
+    geom_smooth(data=dataset%>%filter(level==0), 
+                aes(x=date, y=newDeathsLog), 
+                method = "lm", formula = "y ~ x", se = T, colour="red", size=1.5)+
+    geom_segment(data=dataset,
+                 aes(x=date[1], y=m1$coefficients[1] + m1$coefficients[2], 
+                     xend=date[nrow(dataset)], yend=m1$coefficients[1] +  m1$coefficients[2]*nrow(dataset)),
+                 colour="red", linetype="dashed", size=1.5)+
+    geom_smooth(data=dataset%>%filter(level==1), 
+                aes(x=date, y=newDeathsLog), 
+                method = "lm", formula = "y ~ x", se = T, colour="red", size=1.5)+
+    labs(title=local,
+         x="", 
+         y ="New daily deaths (log)")+
+    guides(color=guide_legend(title=""))+
+    theme_classic()+
+    theme(plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+          plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+          plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+          axis.title = element_text(size = 12),
+          axis.text = element_text(size = 20),
+          legend.text=element_text(size=14),
+          legend.title = element_text(size=14),
+          legend.position = "none")
+}
+
+
+
+
+plotGraphicModelsCasesITS = function(country_models){
+  graph_cases <- list()
+  for(i in 1:length(country_models)){
+    graph_cases[[i]] <- local({
+      i <- i
+      g<-dwplot(purrr::map(country_models[[i]], "newCases"),
+                dot_args = list(size = 2),
+                line_args = list(alpha = 6, size = 1),
+                vline = geom_vline(xintercept = 0, colour = "grey60", linetype = 2)) +
+        theme_classic()+ 
+        labs(title=names(country_models)[i],
+             x="", 
+             y = "")+
+        guides(color=guide_legend(title="Days post-intervetion", label.hjust = .5))+
+        theme(legend.position = "bottom",
+              legend.justification = c(0, 0),
+              legend.background = element_rect(colour="grey80"),
+              legend.title.align = .5,
+              plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+              plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+              plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+              axis.title = element_text(size = 12),
+              axis.text = element_text(size = 22),
+              legend.text=element_text(size=14),
+              legend.title = element_text(size=14))
+    })
+  }
+  return (graph_cases)
+}
+
+plotGraphicModelsDeathsITS = function(country_models){
+  graph_deaths <- list()
+  for(i in 1:length(country_models)){
+    graph_deaths[[i]] <- local({
+      i <- i
+      g<-dwplot(purrr::map(country_models[[i]], "newDeaths"),
+                dot_args = list(size = 2),
+                line_args = list(alpha = 6, size = 1),
+                vline = geom_vline(xintercept = 0, colour = "grey60", linetype = 2)) +
+        theme_classic()+ 
+        labs(title=names(country_models)[i],
+             x="", 
+             y = "")+
+        guides(color=guide_legend(title="Days post-intervetion", label.hjust = .5))+
+        theme(legend.position = "bottom",
+              legend.justification = c(0, 0),
+              legend.background = element_rect(colour="grey80"),
+              legend.title.align = .5,
+              plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+              plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+              plot.caption = element_text(face = "italic", size = 12, hjust = 0.5),
+              axis.title = element_text(size = 12),
+              axis.text = element_text(size = 22),
+              legend.text=element_text(size=14),
+              legend.title = element_text(size=14))
+    })
+  }
+  return (graph_deaths)
+}
+```
+
+
+```{r include=FALSE}
+
+
+## Data cleaning
+
+# Load data into R
+
+covid.data <- read_csv("WHO_Covid_Data.csv")
+
+
+# Remove unnecessary row and column info
+
+covid.data <- covid.data %>% filter(Country %in% c("United States of America","Mexico","Spain","Belgium")) %>% select(-WHO_region)
+
+
+# Translate variable names to names used in functions
+names(covid.data)<-c("date","country_code","country","newCases","totalCases","newDeaths","totalDeaths")
+
+
+# Convert the time variable to Date class
+
+covid.data$date <- as.Date(covid.data$date)
+
+
+# Discover duration of lockdown for each country
+
+lockdown.data <- read.csv("stay-at-home-covid.csv")
+lockdown_US.data <- lockdown.data %>% filter(Entity == "United States",stay_home_requirements == 2)
+lockdown_MX.data <- lockdown.data %>% filter(Entity == "Mexico",stay_home_requirements == 2)
+lockdown_ES.data <- lockdown.data %>% filter(Entity == "Spain",stay_home_requirements == 2)
+lockdown_BE.data <- lockdown.data %>% filter(Entity == "Belgium",stay_home_requirements == 2)
+
+
+# Create lockdown info dataframe for analysis, "countries_lock_info"
+
+countries_lock_info <- data.frame(country_code=c("ES","BE","US","MX"),
+                    name=c("Spain","Belgium","United States","Mexico"),
+                    lock_beg=c(as.Date("2020-03-14"),as.Date("2020-03-18"),as.Date("2020-03-15"),as.Date("2020-03-30")),
+                    lock_fin=c(as.Date("2020-05-26"),as.Date("2020-06-07"),as.Date("2020-07-19"),as.Date("2020-09-10")),
+                    stringsAsFactors = F)
+
+```
+
+
+```{r include=FALSE}
+
+
+# Summary statistics on each country for cumulative cases/cumulative deaths/death per case rate before lockdown,lockdown period,lockdown duration, cumulative cases/deaths at the end of the investigation period, time since beginning of pandemic that the investigation period started, range/variance/median of cases/deaths during investigation period
+
+table_before_lockdown_info <- data.frame(Cases_before_lockdown=c(4535,2142,2959,96193),Deaths_before_lockdown=c(105,33,60,6927), Case_mortality_rate_before_lockdown=c(105/4535,33/2142,60/2959,6927/96193),Time_since_pandemic_began=c("3 days","7 days","4 days","19 days"),row.names=c("Spain","Belgium","United States","Mexico"))
+
+
+Spain_intervention_period <- covid.data %>% filter(country_code=="ES" & date>=countries_lock_info$lock_beg[1] &  date<=countries_lock_info$lock_fin[1]+14)
+
+standard_deviation_daily_cases_Spain <- sd(Spain_intervention_period$newCases)
+
+Spain_intervention_period_new_cases_info <- summary(Spain_intervention_period$newCases)
+
+standard_deviation_daily_deaths_Spain <- sd(Spain_intervention_period$newDeaths)
+
+Spain_intervention_period_new_deaths_info <- summary(Spain_intervention_period$newDeaths)
+
+
+Belgium_intervention_period <- covid.data %>% filter(country_code=="BE" & date>=countries_lock_info$lock_beg[2] &  date<=countries_lock_info$lock_fin[2]+14)
+
+standard_deviation_daily_cases_Belgium <- sd(Belgium_intervention_period$newCases)
+
+Belgium_intervention_period_new_cases_info <- summary(Belgium_intervention_period$newCases)
+
+standard_deviation_daily_deaths_Belgium <- sd(Belgium_intervention_period$newDeaths)
+
+Belgium_intervention_period_new_deaths_info <- summary(Belgium_intervention_period$newDeaths)
+
+
+United_States_intervention_period <- covid.data %>% filter(country_code=="US" & date>=countries_lock_info$lock_beg[3] &  date<=countries_lock_info$lock_fin[3]+14)
+
+standard_deviation_daily_cases_United_States <- sd(United_States_intervention_period$newCases)
+
+United_States_intervention_period_new_cases_info <- summary(United_States_intervention_period$newCases)
+
+standard_deviation_daily_deaths_United_States <- sd(United_States_intervention_period$newDeaths)
+
+United_States_intervention_period_new_deaths_info <- summary(United_States_intervention_period$newDeaths)
+
+
+Mexico_intervention_period <- covid.data %>% filter(country_code=="MX" & date>=countries_lock_info$lock_beg[4] &  date<=countries_lock_info$lock_fin[4]+14)
+
+standard_deviation_daily_cases_Mexico <- sd(Mexico_intervention_period$newCases)
+
+Mexico_intervention_period_new_cases_info <- summary(Mexico_intervention_period$newCases)
+
+standard_deviation_daily_deaths_Mexico <- sd(Mexico_intervention_period$newDeaths)
+
+Mexico_intervention_period_new_deaths_info <- summary(Mexico_intervention_period$newDeaths)
+
+
+table_intervention_info <- data.frame(Lockdown_period=c("March 14 to May 26","March 18 to June 7","March 15 to July 19","March 30 to September 10"),Lockdown_duration=c("74 days","82 days","127 days","165 days"), Range_daily_cases=c("143 to 10,136 cases","22 to 2,336.0 cases","951 to 76,791 cases","166 to 9,133 cases"), Standard_deviation_daily_cases=c("2701.9 cases","579.03 cases","18,076 cases","2535.4 cases"),Median_daily_cases=c("1694.5","432.0","27,030","4,132"), Range_daily_deaths=c("21 to 913 deaths","4 to 324 deaths","11 to 2699 deaths","9 to 840 deaths"),Standard_deviation_daily_deaths=c("291.46 deaths","93.065 deaths","663.99 deaths","224.84 deaths"), Median_daily_deaths=c("212.50 deaths","70.5 deaths","965 deaths","575 deaths"), row.names=c("Spain","Belgium","United States","Mexico"))
+
+
+Spain_covid_period <- covid.data %>% filter(country_code=="ES" & date<=countries_lock_info$lock_fin[1]+14)
+
+Belgium_covid_period <- covid.data %>% filter(country_code=="BE" & date<=countries_lock_info$lock_fin[2]+14)
+
+United_States_covid_period <- covid.data %>% filter(country_code=="US" & date<=countries_lock_info$lock_fin[3]+14)
+
+Mexico_covid_period <- covid.data %>% filter(country_code=="MX" & date<=countries_lock_info$lock_fin[4]+14)
+
+covid_period <- covid.data %>% filter(date<=countries_lock_info$lock_fin[4]+14)
+```
+
+
+The following table was made to illustrate the condition each country was in the day before they entered into their respective lockdowns. By all three virus measures, Mexico is an outlier as it has much more extreme data than the other countries. The reason is likely due to Spain not entering into lockdown until 19 days after the pandemic was officially declared on March 11. As such, the number of cases and deaths in the Mexico data is more likely to be higher than the other countries in the subsequent analysis. In addition, among the other three countries, Spain has the highest measure for all three measures, even though it entered into lockdown earliest. This may indicate that Spain has higher rates of virus transmission than Belgium or the United States.
+
+
+```{r}
+
+
+table_before_lockdown_info
+```
+
+
+The following table describes the period and duration of the lockdown for each country as well as summary statistics detailing what occurred in regards to new cases and deaths during the intervention period. Each period consisted of the lockdown period and 14 days afterward; this is because because the WHO has found that the virus takes up to 14 days to incubate [3]. As such, the full effect of the lockdown intervention will include up to 14 days after the lockdown ends. 
+
+
+Mexico had by far the longest lockdown, which was more than a month longer than the second longest, the United States, and more than twice as long as the third longest, Belgium. The high numbers that the United States has compared to other countries can likely be explained in part by it having a much largest population than the other countries. As such, it had the largest range of daily cases and daily deaths, with highs of 76,791 cases and 2,699 deaths, the largest medians of daily cases and daily deaths at 27,030 cases and 965 deaths, respectively, and the highest standard deviation of daily cases and daily deaths at 18,076 cases and 663.99 deaths, respectively. It is likely that Belgium having the lowest numbers can be explained similarly since it has the smallest population of all the countries examined. The median was used instead of the mean to represent the average of the distributions because for most of the distributions, the mean differed significantly from the median, indicating skewed distributions and the median better representing the distributions' centers.
+
+
+```{r}
+table_intervention_info
+```
+
+
+```{r include=FALSE}
+
+
+# Exploratory Visualizations
+
+new_cases_all_countries <- covid_period %>% ggplot(aes(x=date,y=newCases,color=country))+
+  geom_line()+
+  labs(title="New Cases for All Countries")+
+  xlab("Date")+
+  scale_y_continuous(name="New Cases",breaks=(c(seq(from=0,to=77000,by=4000))),limits = (c(0,77000)))
+
+
+new_deaths_all_countries <- covid_period %>% ggplot(aes(x=date,y=newDeaths,color=country))+
+  geom_line()+
+  labs(title="New Deaths for All Countries")+
+  xlab("Date")+
+  scale_y_continuous(name="New Deaths",breaks=(c(seq(from=0,to=2800,by=200))),limits = (c(0,2800)))
+
+
+new_cases_Belgium <- Belgium_covid_period %>% ggplot(aes(x=date,y=newCases))+
+  geom_line()+
+  labs(title="New Cases for Belgium")+
+  xlab("Date")+
+  scale_y_continuous(name="New Cases",breaks=(c(seq(from=0,to=2400,by=200))),limits = (c(0,2400)))+
+  geom_vline(xintercept=countries_lock_info$lock_beg[2],linetype=3)
+
+
+new_cases_Mexico <- Mexico_covid_period %>% ggplot(aes(x=date,y=newCases))+
+  geom_line()+
+  labs(title="New Cases for Mexico")+
+  xlab("Date")+
+  scale_y_continuous(name="New Cases",breaks=(c(seq(from=0,to=9200,by=1000))),limits = (c(0,9200)))+
+  geom_vline(xintercept=countries_lock_info$lock_beg[4],linetype=3)
+
+
+  Spain_covid_period$newCasesLog <- log(Spain_covid_period$newCases)
+  Spain_covid_period$newCasesLog[is.infinite(Spain_covid_period$newCasesLog)] <- NA
+  
+  Spain_covid_period$newDeathsLog <- log(Spain_covid_period$newDeaths)
+  Spain_covid_period$newDeathsLog[is.infinite(Spain_covid_period$newDeathsLog)] <- NA
+
+  
+  Belgium_covid_period$newCasesLog <- log(Belgium_covid_period$newCases)
+  Belgium_covid_period$newCasesLog[is.infinite(Belgium_covid_period$newCasesLog)] <- NA
+  
+  Belgium_covid_period$newDeathsLog <- log(Belgium_covid_period$newDeaths)
+  Belgium_covid_period$newDeathsLog[is.infinite(Belgium_covid_period$newDeathsLog)] <- NA
+
+
+  United_States_covid_period$newCasesLog <- log(United_States_covid_period$newCases)
+  United_States_covid_period$newCasesLog[is.infinite(United_States_covid_period$newCasesLog)] <- NA
+  
+  United_States_covid_period$newDeathsLog <- log(United_States_covid_period$newDeaths)
+  United_States_covid_period$newDeathsLog[is.infinite(United_States_covid_period$newDeathsLog)] <- NA
+
+  
+  Mexico_covid_period$newCasesLog <- log(Mexico_covid_period$newCases)
+  Mexico_covid_period$newCasesLog[is.infinite(Mexico_covid_period$newCasesLog)] <- NA
+  
+  Mexico_covid_period$newDeathsLog <- log(Mexico_covid_period$newDeaths)
+  Mexico_covid_period$newDeathsLog[is.infinite(Mexico_covid_period$newDeathsLog)] <- NA
+  
+  
+  log_new_cases_Spain <- Spain_covid_period %>% ggplot(aes(x=date,y=newCasesLog))+
+  geom_point()+
+  labs(title="Log Transformation New Cases for Spain")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Cases")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[1],linetype=3)
+  
+  log_new_deaths_Spain <- Spain_covid_period %>% ggplot(aes(x=date,y=newDeathsLog))+
+  geom_point()+
+  labs(title="Log Transformation New Deaths for Spain")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Deaths")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[1],linetype=3)
+  
+  
+  log_new_cases_Belgium <- Belgium_covid_period %>% ggplot(aes(x=date,y=newCasesLog))+
+  geom_point()+
+  labs(title="Log Transformation New Cases for Belgium")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Cases")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[2],linetype=3)
+  
+  log_new_deaths_Belgium <- Belgium_covid_period %>% ggplot(aes(x=date,y=newDeathsLog))+
+  geom_point()+
+  labs(title="Log Transformation New Deaths for Belgium")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Deaths")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[2],linetype=3)
+  
+  
+  log_new_cases_United_States <- United_States_covid_period %>% ggplot(aes(x=date,y=newCasesLog))+
+  geom_point()+
+  labs(title="Log Transformation New Cases for the US")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Cases")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[3],linetype=3)
+  
+  log_new_deaths_United_States <- United_States_covid_period %>% ggplot(aes(x=date,y=newDeathsLog))+
+  geom_point()+
+  labs(title="Log Transformation New Deaths for the US")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Deaths")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[3],linetype=3)
+  
+  
+  log_new_cases_Mexico <- Mexico_covid_period %>% ggplot(aes(x=date,y=newCasesLog))+
+  geom_point()+
+  labs(title="Log Transformation New Cases for Mexico")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Cases")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[4],linetype=3)
+  
+  log_new_deaths_Mexico <- Mexico_covid_period %>% ggplot(aes(x=date,y=newDeathsLog))+
+  geom_point()+
+  labs(title="Log Transformation New Deaths for Mexico")+
+  xlab("Date")+
+  scale_y_continuous(name="Log Transformation New Deaths")+
+  geom_vline(xintercept=countries_lock_info$lock_beg[4],linetype=3)
+  
+  
+```
+
+
+The following two graphs are intended to give the reader a comparison of the rough magnitudes of the cases/deaths and their trends during different periods from the beginning of known cases of the virus worldwide in early January 2020 to the end of the intervention period of Mexico, the longest intervention period. It appears that during the intervention period of the United States (March 15 to July 19), cases and deaths peak in early April soon after the lockdown is implemented and decrease for most of the remainder of the period, only rising near the end. Given that the lockdown was the second longest lockdown examined, it is possible that if the downward trend was significantly associated with the lockdowns, the upward trend at the end was because of people refusing to follow the lockdown rules as strictly as in the past due to the lockdown's length. At the scale necessary to plot all the graphs at once, the distributions of new cases for Belgium and Mexico are somewhat difficult to interpret, so they were also graphed separately. With this set of graphs, it appears that all countries have new cases and new deaths that rise to a peak after their respective lockdowns begin, and with the exception of the United States, trend downwards for the duration of their intervention periods. As a result, there is some evidence that the lockdowns are associated with decreases in new cases and new deaths for each country, but testing will have to occur before it can be known weather the decreases are statistically significant.
+
+
+```{r fig.width=6,fig.height=4}
+
+
+new_cases_all_countries
+
+new_deaths_all_countries
+
+new_cases_Belgium
+
+new_cases_Mexico
+```
+
+
+For tests for statistical significance to be conducted, models will have to be fitted to compare the expected counts and the observed counts of new cases and new deaths for each country. The following graphs provide evidence that for each distribution for each country, a log transformation of the variables leads to distributions that appear to be able to be modeled decently with linear relationships to time. It follows that a linear regression and interrupted time series model may be warranted.
+
+
+```{r warning=FALSE}
+log_new_cases_Spain
+log_new_deaths_Spain
+```
+
+```{r warning=FALSE}
+log_new_cases_Belgium
+log_new_deaths_Belgium
+```
+
+```{r warning=FALSE}
+log_new_cases_United_States
+log_new_deaths_United_States
+```
+
+```{r warning=FALSE}
+log_new_cases_Mexico
+log_new_deaths_Mexico
+```
+
+```{r include=FALSE}
+
+
+  # "for" loop for compiling info for each country into "countries_lock_data"
+
+countries_lock_data <- list()
+for(i in 1:nrow(countries_lock_info)){
+  
+  # Select the country according to the country code, subset dates up to 14 days after a lockdown ends
+  
+  country <- covid.data %>% filter(country_code==countries_lock_info$country_code[i]
+                                   & date<=countries_lock_info$lock_fin[i]+14)
+  
+
+  # Add variables "newCasesLog" (log transformation of new cases data) and "newDeathsLog" (log transformation of "newDeaths" data) to the "country" dataset for modeling later
+  
+  country$newCasesLog <- log(country$newCases)
+  country$newCasesLog[is.infinite(country$newCasesLog)] <- NA #For days with zero new cases
+  
+  country$newDeathsLog <- log(country$newDeaths)
+  country$newDeathsLog[is.infinite(country$newDeathsLog)] <- NA #For days with zero new deaths
+  
+
+  # Add variables "time" (indicating the day a set of observations occurred where "1" is the first day a set of observations occurred), "level" (indicating whether an observation occurred before lockdown began "0" or during/after lockdown "1"), and "trend" (indicating the number of days the lockdown has been in effect when an observation occurred) to the "country" dataset for modeling later
+  
+  country <- settingData(country,countries_lock_info$lock_beg[i])
+  
+
+  # Produce natural scale graphs and logarithmic scale graphs for cumulative cases over time and cumulative deaths over time
+  
+  gCountryCurves <- plotGraphicEpidemicCurves(country,countries_lock_info$name[i],countries_lock_info$lock_beg[i], countries_lock_info$lock_fin[i])
+  
+
+  # Produce the graphs of the interrupted time series models for log transformation of new cases and produce model statistics
+  
+  gCountryNewCasesITS<-plotGraphicNewCasesITS(country,countries_lock_info$name[i],
+                       countries_lock_info$lock_beg[i], countries_lock_info$lock_fin[i])
+  mGenNewCasesITS<-modelGeneral(country,country$newCasesLog)
+  mSumNewCasesITS<-modelSummary(country,country$newCasesLog)
+  
+  
+  # Produce the graphs of the interrupted time series models for log transformation of new deaths and produce model statistics
+  
+  gCountryNewDeathsITS<-plotGraphicNewDeathsITS(country,countries_lock_info$name[i],
+                        countries_lock_info$lock_beg[i], countries_lock_info$lock_fin[i])
+  mGenNewDeathsITS<-modelGeneral(country,country$newDeathsLog)
+  mSumNewdeathsITS<-modelSummary(country,country$newDeathsLog)
+
+  
+  #Compile info for each country into "countries_lock_data"
+  
+  country_data <- list(
+                  data=country,
+                  epidemic_graphs=gCountryCurves,
+                  new_cases_graph_its=gCountryNewCasesITS,
+                  new_cases_model=mGenNewCasesITS,
+                  new_cases_model_summary=mSumNewCasesITS, 
+                  new_deaths_graph_its=gCountryNewDeathsITS,
+                  new_deaths_model=mGenNewDeathsITS,
+                  new_deaths_model_summary=mSumNewdeathsITS
+                  )
+  countries_lock_data <- append(countries_lock_data, country_data)
+  names(countries_lock_data)[i] <- countries_lock_info$name[i]
+}
+```
+
+
+***
+
+
+### E. Inferential Analysis
+
+
+To test whether lockdowns has a significant effect of virus incidence and death, I propose the following ordinary least squares regression model with a logarithmic transformation on the dependent variable \[{Y_t} \] and an interrupted time series (ITS) design.
+
+
+\[{Y_t}= \alpha + \beta_1 x_1\ + \beta_2 x_2 + \beta_3 x_3 + \epsilon \]
+
+where \[{Y_t} \] represents the log transform of new cases or new deaths, \[{X_1} \] represents the pre-intervention trend, \[{X_2} \] represents the level change immediately after policy intervention, \[{X_3} \] represents the slope change following the lockdown calculated ax a product of \[{X_1} \] and \[{X_2} \], and \[\epsilon \] is the error term. The assumptions of the model are as follows: the error term has a population mean of zero (taken care of by including the constant term \[\alpha\]; the independent variables are uncorrelated to the error term; observations of the error term are uncorrelated to each other; and the error term has a constant variance. A statistically significant and positive \[\beta_1 \] would be a positive trend before the intervention, and a statistically significant and negative \[\beta_3 \] = would mean a negative trend of cases/deaths after intervention/ The model assumes that the average and the trend of the series would be constant without country-level intervention. Again, the intervention for each lasts from the beginning of their lockdowns and the end is marked by 14 days after the lockdown ends since that is the maximum incubation of the virus according to the WHO.With this model, if my hypothesis is correct of the intervention leading to a statistically significant difference in virus incidences and deaths, than \[\beta_3 \] will be statistically significant and negative.
+
+
+The following graphs show the lockdown periods (light blue interval), the expected number of daily cases/deaths assuming trends continue (lines that extend up and to the right) and the actual observations of counts of daily cases/deaths (lines trending away from first line). In the table depicting estimates for the parameters along with their associated p-values and standard errors, we can see that for Spain,
+\[\beta_3 \] was negative and very strongly statistically significant (p<0.001) for daily new cases and daily new deaths; Belgium's \[\beta_3 \] was negative and statistically significant for both also, with very strong significance in new daily cases and high significance (p<0.01) in new daily deaths; The United States' \[\beta_3 \] was negative and statistically significant for both, with very strong significance in new daily cases and moderate significance (p<0.05) in new daily deaths; and Mexico's \[\beta_3 \] was negative and had very strong significance in new daily cases but did not have significance (p>0.1) in new daily deaths. The models for the new daily cases fit better than the models for the new daily deaths, but all models had R Squared of 0.7 or greater, so almost 50% of the variance in the data can be explained by the models. 
+
+```{r warning=FALSE}
+
+
+### E. Inferential Analysis
+
+# Graphs for New daily cases for the countries
+
+countries_lock_data[3]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[11]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[19]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[27]
+```
+
+
+```{r warning=FALSE}
+
+
+# Graphs for New daily deaths for the countries
+
+countries_lock_data[6]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[14]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[22]
+```
+
+```{r warning=FALSE}
+
+countries_lock_data[30]
+```
+
+
+
+```{r}
+
+
+# Table 2: Models and coefficients for New daily cases for the countries
+
+# countries_lock_data[5]
+# 
+# countries_lock_data[13]
+# 
+# countries_lock_data[21]
+# 
+# countries_lock_data[29]
+
+Model_parameters_newCases <- data.frame(
+                            Spain=c("-4.3826 (***) (0.7170)","0.13316 (***) (0.01256)",
+                          "4.0272 (***) (0.3300)","-0.17165 (***) (0.01312)","0.8628"),
+                          Belgium=c("-5.1622 (***) (1.0285)","0.14357 (***) (0.01555)",
+                          "1.9175 (***) (0.2402)","-0.17699 (***) (0.01571)","0.7984"),
+                    United_States=c("-4.1257 (***) (0.4364)","0.12357 (***) (0.00807)",
+                          "4.5225 (***) (0.2321)","-0.11075 (***) (0.00820)","0.9577"), 
+                           Mexico=c("-8.8911 (***) (0.8700)","0.16895 (***) (0.01202)",
+                          "1.1815 (***) (0.2357)","-0.15678 (***) (0.01206)","0.9037"),
+                        row.names=c("Intercept","Time","Level","Trend","R_Squared")
+                                        )
+
+Model_parameters_newCases
+```
+
+
+```{r}
+
+
+# Table 3: Models and coefficients for New daily deaths for the countries
+
+# countries_lock_data[8]
+# 
+# countries_lock_data[16]
+# 
+# countries_lock_data[24]
+# 
+# countries_lock_data[32]
+
+Model_parameters_newDeaths <- data.frame(
+                             Spain=c("-6.2497 (**) (2.1145)","0.12017 (***) (0.03247)",
+                            "4.5101 (***) (0.3529)","-0.15360 (***) (0.03263)","0.7896"),
+                           Belgium=c("-23.617 (**) (8.342)","0.3469  (**)  (0.1165)",
+                            "3.2718 (***) (0.5141)","-0.3808 (**) (0.1165)","0.7161"),
+                     United_States=c("-7.6505 (.) (4.2847)","0.13648 (*) (0.06502)",
+                            "4.1149 (***) (0.51233)","-0.13025 (*) (0.06505)","0.7211"), 
+                            Mexico=c("-11.70050 (>0.1) (7.49161)","0.15240 (.) (0.09007)",
+                          "3.57045 (***) (0.44662)","-0.14230 (>0.1) (0.09008)","0.7196"),
+                         row.names=c("Intercept","Time","Level","Trend","R_Squared")
+                                        )
+
+Model_parameters_newDeaths
+```
+
+
+
+
+```{r include=FALSE}
+
+
+#Generating confidence intervals for B_3
+
+country_models<-list()
+for(i in 1:nrow(countries_lock_info)){
+  models<-list()
+  for(k in 15:21){
+    country<-covid.data%>%filter(country_code==countries_lock_info$country_code[i] & date<=countries_lock_info$lock_fin[i]+k)
+    country<-settingData(country,countries_lock_info$lock_beg[i])
+    
+    logNewCases<-log(country$newCases)
+    logNewCases[is.infinite(logNewCases)]<-NA
+    mNewcasesITS<-modelGeneral(country,logNewCases)
+
+    logNewDeaths<-log(country$newDeaths)
+    logNewDeaths[is.infinite(logNewDeaths)]<-NA
+    mNewdeathsITS<-modelGeneral(country,logNewDeaths)
+
+    
+    model<-list(newCases=mNewcasesITS,newDeaths=mNewdeathsITS)
+    models<-append(models, list(model))
+  }
+  names(models)<-paste(rep(15:21), "days")
+  country_models<-append(country_models, list(models))
+  names(country_models)[i]<-countries_lock_info$name[i]
+}
+
+graph_cases <- plotGraphicModelsCasesITS(country_models)
+graph_deaths <- plotGraphicModelsDeathsITS(country_models)
+```
+
+
+Confidence intervals for the \[\beta_3 \] estimates can also be generated for a time window of 15-21 days after lockdown occurred to verify whether the trend is still significant at the distance in time. Other than the \[\beta_3 \] values in Mexico's and the United States' new daily deaths, all were statistically significant.
+
+
+```{r fig.width=8,fig.height=6}
+
+
+  #Confidence intervals for parameters for new cases for each day one week after lockdown ends for each country
+
+graph_cases[1]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_cases[2]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_cases[3]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_cases[4]
+```
+
+
+
+```{r fig.width=8,fig.height=6}
+
+  #Confidence intervals for parameters for new deaths for each day one week after lockdown ends for each country
+
+graph_deaths[1]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_deaths[2]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_deaths[3]
+```
+
+```{r fig.width=8,fig.height=6}
+
+graph_deaths[4]
+```
+
+
+***
+
+
+### F. Sensitivity Analysis
+
+
+Below are the results of my visual check to determine using residuals vs. fitted value plots whether the error terms in my models had constant variance, an assumption of my models. It appears that none of the graphs below (two for each country in the order of Spain, Belgium, United States, and Mexico, respectively, for their new cases and new deaths) have constant random scatter with many having distinct patterns in their scatter. This indicates that my assumptions of constant variance in the error terms and a linear relationships are incorrect, and if I had more time I would modify my model to take this information into account. For example, I may have include a quadratic term to rectify a time dependent relation that appears to be non-linear based on the quatratic curvature in many of the graphs.
+
+```{r error=FALSE}
+
+
+### F. Sensitivity Analysis
+
+# Testing assumption of the error term having constant variance
+
+
+
+#Spain residuals vs. fitted values plot
+
+plot(countries_lock_data[4]$Mexico$fitted.values,countries_lock_data[4]$Mexico$residuals)
+
+plot(countries_lock_data[7]$new_deaths_model$fitted.values,countries_lock_data[7]$new_deaths_model$residuals)
+
+
+#Belgium residuals vs. fitted values plot
+
+plot(countries_lock_data[12]$new_cases_model$fitted.values,countries_lock_data[12]$new_cases_model$residuals)
+
+plot(countries_lock_data[15]$new_deaths_model$fitted.values,countries_lock_data[15]$new_deaths_model$residuals)
+
+
+#United States residuals vs. fitted values plot
+
+plot(countries_lock_data[20]$new_cases_model$fitted.values,countries_lock_data[20]$new_cases_model$residuals)
+
+plot(countries_lock_data[23]$new_deaths_model$fitted.values,countries_lock_data[23]$new_deaths_model$residuals)
+
+
+#Mexico residuals vs. fitted values plot
+
+plot(countries_lock_data[28]$new_cases_model$fitted.values,countries_lock_data[28]$new_cases_model$residuals)
+
+plot(countries_lock_data[31]$new_deaths_model$fitted.values,countries_lock_data[31]$new_deaths_model$residuals)
+```
+
+
+
+***
+
+
+### G. Discussion
+
+
+Using country-level data on the COVID-19 virus from the World Health Organization, I created a ordinary least squares regression model with an interrupted time series design to determine whether there was a significant correlation between the lockdown interventions and the reductions in virus spread and mortality. Unfortunately, during the sensitivity analysis it was discovered using residuals vs. fitted model plots that the assumptions of linearity and constant variance in the error terms were unlikely to be true. I had thought I sufficiently corrected for this by taking a log transformation of the data, but next time I will try a box-cox transformation and/or include non-linear model terms to improve upon my model in the future.
+
+
+If my model does work, however, it was found that there existed negative and statistically significant values for \[\beta_3 \] on all models with the exception of The United States and Mexico's daily deaths distributions. This indicated that the lockdown had a significant effect in decreasing the daily cases and deaths for all other countries but also for the daily new cases of the United States and Mexico. 
+
+
+Some sources of error in my analysis include the criteria and frequency of virus testing and reporting and the extent to which the group that compiled the data of country-level virus intervention policy dates and levels had reasonable criteria for when a country was considered at level "2" restrictions. For instance, I noticed several discrepancies between the data visualization on the Our World in Data interactive graphic and the actual dataset, leading me to believe one or the other has multiple errors within it.
+
+
+***
+
+
+### H. Code Appendix {-}
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
+
+
+***
+
+
+### I. Acknowledgement {-}
+
+
+The idea for the project and much of the code used for the analysis is from the article "The effect of lockdown on the COVID-19 epidemic in Brazil: evidence from an interrupted time series design" by Lucas Silva, Dalson Figueiredo Filho, and Antônio Fernandes. I owe them a debt of gratitude for providing such an accessible analysis of COVID-19 data.
+
+
+
+***
+
+
+### J. References {-}
+
+
+[1] World Heath Organization
+
+
+Link to WHO website where data is found: https://covid19.who.int/info
+
+
+Link to data: https://covid19.who.int/WHO-COVID-19-global-data.csv
+
+
+[2] Our World in Data
+
+
+Link to website where data is found (go to the "Download" tab that is part of the interactive map): https://ourworldindata.org/covid-stay-home-restrictions
+
+
+[3] WHO information on 14 day incubation period: 
+
+
+World Health Organization. "Considerations for quarantine of individuals in the context
+of containment for coronavirus disease (COVID-19)." Geneva: World Health Organization; 2020.
+
+
+***
+
+
+### K. Session info {-}
+```{r}
+sessionInfo()
+```
+
+
+***
